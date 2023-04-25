@@ -11,7 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Background
 
-In this case study, we will develop a series of models to predict spatio-temporal variations in **daily mean** **summer temperatures** across Montreal, Canada. Daily temperature data (i.e., mean, minimum, and maximum daily temperatures) were collected simultaneously from more than 100 locations across Montreal during the summer of 2019. In addition, various land use parameters around each temperature monitoring location were linked to the database along with temperature measurements collected at the Montreal airport.
+In this case study, we will develop a series of models to predict spatio-temporal variations in **daily mean** **summer temperatures** across Montreal, Canada. Daily temperature data (i.e., mean, minimum, and maximum daily temperatures) were collected simultaneously from more than 100 locations across Montreal during the summer of 2019.
+
+In addition, various land use parameters around each temperature monitoring location were linked to the database along with temperature measurements collected at the Montreal airport.
 
 Typically, epidemiological studies interested in the acute health impacts of heat would rely only on airport temperature data; however, these values do not capture fine-scale variations in heat exposures across the city.
 
@@ -19,11 +21,15 @@ Typically, epidemiological studies interested in the acute health impacts of hea
 
 **We will develop and examine the following models using the *mlr* and *keras* packages:**
 
-1.  Linear Regression Model (*mlr*)
+1.  Linear Regression (*mlr*)
 2.  Generalized Additive Model (*mlr*)
 3.  Random Forest (*mlr*)
 4.  XGBoost (*mlr*)
 5.  Dense Neural Networks (*keras*)
+
+Throughout the exercise we will keep track of model performance (mean square error (MSE) in cross-validation procedures or external test sets) using this **Google Sheet**:<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit?usp=sharing>
+
+This will allow us to compare model performance across the class!
 
 ## Load Packages
 
@@ -36,7 +42,8 @@ pacman::p_load(tidyverse,
                dplyr,
                mlr,
                lubridate,
-               #parallel, we don't need these in the cloud
+               # We don't need these in the cloud
+               #parallel, 
                #parallelMap,
                mboost,
                rgdal,
@@ -52,6 +59,14 @@ pacman::p_load(tidyverse,
                ggpubr,
                gridExtra)
 
+#Keras and Tensoflow (make sure to remove the'#" the first time you run this)
+#install.packages("keras")
+#keras::install_keras(tensorflow = "cpu")
+
+library(keras)
+library(tensorflow)
+#this will take a couple minutes
+
 ```
 
 ## Load Data
@@ -60,13 +75,12 @@ The code below will load the data we will need for this exercise. The last line 
 
 We will model **daily_avg_site** (i.e., the daily mean temperature), but other variables could also be of interest as outcomes. For example, if you have time you can also try modelling **night_ave_site**, which is the night-time average temperature.
 
-```{r Load Data, echo=FALSE}
+```{r Load Data Used for Modelling, echo=FALSE}
 #Load Temperature Database
 mtl_temp_dat <-read_csv("data/compiled_data_daily.csv")
 
 #Load Shape File for Montreal Map
-mtl_boroughs <- readOGR(dsn="mtl-borough-shp",verbose=FALSE)
-
+mtl_boroughs <- readOGR(dsn="mtl",verbose=FALSE)
 
 #List Variable Names in the Temperature Dataset
 names(mtl_temp_dat)
@@ -84,11 +98,12 @@ ggplot(data=mtl_temp_dat, mapping=aes(x=lon, y=lat))+
   gg(mtl_boroughs)+
   geom_point() +
   theme_void()
+
 ```
 
 ## Cleaning the Data
 
-The code chunk below creates a smaller database limited to the outcome we want to predict and the predictor variables we want to consider.
+The code chunk below creates a smaller database limited to the outcome we want to predict and the independent variables we want to consider.
 
 Specifically, we will limit the buffer size to 300 meters for our land use variables and we will create a variable for time-trend (called "time" in the data set); this variable is included to capture possible time-trends in temperature over the course of the summer.
 
@@ -283,7 +298,7 @@ Admittedly, using the *mlr* package for linear regression is overkill but is inc
 
 The ***mlr*** **package** follows a similar procedure in developing models:
 
-1.  **Define a Method to Impute Missing Data** (we skip this step as it is not relevant in our examples but we include here for completion)
+1.  **Define a Method to Impute Missing Data** (we skip this step as it is not relevant in our example but we include here for completion)
 2.  **Define the "Task" and "Learner"** (e.g., a regression task using a linear regression model)
 3.  **Define and Implement a Method to Automate Feature Selection** (i.e., select the best set of predictor variables) or **Hyperparameter Tuning**
 4.  **Evaluate Model Performance through Cross-Validation**
@@ -304,7 +319,7 @@ The ***mlr*** **package** follows a similar procedure in developing models:
 
 **Define the Task and Learner**
 
--   In the code below we first define our task using the "**makeRegrTask**" function. This functions takes our dataframe (i.e.,**mtl_temp_dat_clean_std**) and our target variable name (i.e., **ln_daily_avg_site**) as inputs
+-   In the code below we first define our task using the "**makeRegrTask**" function. This function takes our dataframe (i.e.,**mtl_temp_dat_clean_std**) and our target variable name (i.e., **ln_daily_avg_site**) as inputs
 
 -   We use the "**makeLearner**" function to define our "Learner" which in this case is linear regression model (denoted as "regr.lm" in the mlr package).
 
@@ -344,7 +359,7 @@ plotFilterValues(fvalues = filter_values) + theme_bw() +  coord_flip()
 
 We see above that airport temperature is the most important predictor (not surprising) followed by time, and the area of buildings within 300m (a measure of the built environment). Correlations are weaker for other variables
 
-We would like to consider all 25 of these factors as possible predictors. To do this, we will create what *mlr* calls a "**filter wrapper**" that will determine the best set of predictors of the set of 25 we have identified. This is implemented in the following steps:
+We would like to consider all 25 of these variables in our model. To do this, we will create what *mlr* calls a "**filter wrapper**" that will determine the best set of predictors of the set of 25 we have identified. This is implemented in the following steps:
 
 1.  We use the "**makeFilterWrapper**" function to create a new learner object (called filter_wrapper) that combines our learner (i.e., a linear regression model) with the method we want to use for variable selection. We specify that we would like to select up to the best 25 variables (fw.abs = 25) based on the linear correlation with the outcome (fw.method = "linear.correlation"). We also specify that we want to force 4 specific variables into the model based on our previous knowledge (latitude, longitude, time, and daily average airport temperature) using the "fw.mandatory.feat" option.
 2.  Create the parameter space that will be searched to select variables. Here we specify we are going to search for between 4 and 25 variables. We also define a grid search algorithm which will try every value of our search space (i.e., between 4 and 25 variables).
@@ -352,7 +367,7 @@ We would like to consider all 25 of these factors as possible predictors. To do 
 
 ```{r Creating the Filter Wrapper, echo=FALSE}
 # 1. Define the Filter Used to Select Variables
-set.seed(1980) #set seed for reproducibility. Pick any number.
+set.seed(1980) #Pick any different number (i.e. change 1980 to something else) to set seed for reproducibility.
 
 filter_wrapper <- makeFilterWrapper(learner = lin, #defined above
                                    fw.method = "linear.correlation",
@@ -390,9 +405,9 @@ tuned_features
 
 From the output above you can see that the filter wrapper procedure selected a model including all 25 predictors.
 
-We will now evaluate our linear model in a cross-validation (3-fold CV) procedure to estimate how our model will perform in predicting values in external data sets
+We will now evaluate our linear model in a cross-validation (3-fold CV) procedure to estimate how our model will perform in predicting values in external data sets.
 
-```{r Evaluate the Linear Model using a Cross-Validation Procedure, echo = FALSE}
+```{r Evaluate Model using Cross-Validation Procedure, echo = FALSE}
  
 #Train Model Using CV ----------------------------------------------------
 set.seed(1980) #set seed for reproducibility. Pick any number.
@@ -412,6 +427,10 @@ lm_CV
 ```
 
 Let's examine the relationship between measured and predicted values in the cross-validation procedure. To do this, we first create a data frame including the results of the cross-validation procedure.
+
+**Enter the mse.test.mean value (this is the mean MSE value across the 3-fold cross validation procedure) in the Google Sheet for the linear model:**
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
 
 ```{r Look at Cross Validation Results }
 # 1. Create Dataframe Including Measured and Predicted Values from the Cross Validation
@@ -440,7 +459,7 @@ fit_lm_iter_3 <- lm(truth~response, data=lm_cv_results, subset=(iter==3))
 summary(fit_lm_iter_3)
 ```
 
-We can see that the linear models does very well with R2 values in the external test set of \~0.93 and slopes approximately equal to \~1.
+We can see that the linear model does very well with R2 values in the external test set of \~0.93 and slopes approximately equal to \~1.
 
 Finally, we can now train the model on all of the data and examine the results with some diagnostic plots. The code below trains the model only on variables that were selected by our filter process (but in our case this is the entire dataset).
 
@@ -461,6 +480,7 @@ In *mlr*, you have to call the "**getLearnerModel**" function on the model objec
 
 #Extract model information
 lm_model <- getLearnerModel(filtered_model)
+saveRDS(lm_model, "models/linear_model.rds")
 
 #Look at the Model Results and Some Diagnostic Polots
 summary(lm_model)
@@ -485,8 +505,6 @@ resid_map_lm <- ggplot(data=mtl_temp_dat_clean, mapping=aes(x=lon, y=lat, color=
 resid_map_lm
 ```
 
-Overall, the linear model does very well (R2 **\~0.93; mse.test.mean = 0.0034458)** but we may be able to improve performance by including non-linear relationships for predictor variables.
-
 Finally, we will **generate predictions** across Montreal from our linear model that we can map later and compare to the other models. The predictions are for the first day of July (time=31) with an airport temperature of 30 degrees C.
 
 ```{r Add Linear Model Predictions to Dataframe we will Map later}
@@ -504,15 +522,15 @@ names(mtl_map_data_std)
 
 ## MODEL 2: GAMs
 
-Next we will develop a GAM model for the temperature data and see if this method can improve on the already very good linear model by capturing *non-linear relationships* between our independent variables and our outcome.
+Next we will develop a GAM model for the temperature data and see if this method can improve on the linear model by capturing *non-linear relationships* between our independent variables and our outcome.
 
 One of the predictor variables that is likely to have a non-linear relationship with temperature is time-trend. We will plot this below.
 
-```{r Time-Trend vs. Temperaature, echo=FALSE}
+```{r Time-Trend vs. Temperature, echo=FALSE}
 # names(mtl_temp_dat_clean_std) if you need a reminder on variable names you can run this
 
 ggplot(mtl_temp_dat_clean_std, aes(y=ln_daily_avg_site, x=time)) +
-  geom_point(alpha=0.01)+
+  geom_point(alpha=0.1)+
   geom_smooth(method="gam")+
   theme_classic()
 
@@ -522,14 +540,14 @@ From the plot above we see that the relationship between outdoor temperature and
 
 We will now define our GAM model "task" and "learner" similar to what we did above for the linear model.
 
-**Note**: Another very common package for GAMs is the *mgcv* package (<https://cran.r-project.org/web/packages/mgcv/index.html>). We use the *mlr* package here as it allows us to use multiple machine learning approaches within a common framework.The *mlr* package also uses a boosting algorithm (GAMboost, for more infomration run: vignette(package = "mboost", "mboost_tutorial") for GAMs which improves performance.
+**Note**: Another very common package for GAMs is the *mgcv* package (<https://cran.r-project.org/web/packages/mgcv/index.html>). We use the *mlr* package here as it allows us to use multiple machine learning approaches within a common framework.The *mlr* package also uses a boosting algorithm for GAMs which improves performance (GAMboost, for more information run: vignette(package = "mboost", "mboost_tutorial") .
 
 ```{r Define GAM Task and GAM Learner,echo=FALSE }
 
 #1. Define GAM Task 
 gam_task <- makeRegrTask(
   data=as.data.frame(mtl_temp_dat_clean_std), # Our dataframe
-  target="ln_daily_avg_site" # The variable we want predict
+  target="ln_daily_avg_site" # The variable we want to predict
 )
 
 #2. Define the GAM Learner
@@ -537,7 +555,7 @@ gam <- makeLearner("regr.gamboost") #mlr uses the gamboost algorithm
 
 ```
 
-As we did for the linear model, we will define our filter wrapper for selecting GAM model covariates.
+As we did for the linear model, we will define our filter wrapper for selecting variables to include in our GAM model.
 
 ```{r Create Filter Wrapper for GAM Variable Selection, echo = FALSE}
 
@@ -578,18 +596,20 @@ filter_gam_cv
 
 As you can see from the GAM CV procedure above, the mse.test.mean is lower (\~23% lower) than for the linear model (mse.test.mean 0.00264 compared to 0.00345). Let's examine the cross-validation results further using a plot
 
+**Enter the mse.test.mean value in the Google Sheet for the GAM model:**
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
+
 ```{r Look at GAM Cross Validation Results }
 # Create Dataframe Including Measured and Predicted Values from the GAM Model in the Holdout Set
-gam_cv_results <-as.data.frame(filter_gam_cv$pred)
-gam_cv_results$iter = factor(gam_cv_results$iter)
+gam_cv_results <- as.data.frame(filter_gam_cv$pred)
+gam_cv_results$iter <- factor(gam_cv_results$iter)
 
 #Plot Cross-Validation Data ("response" is the prediction and "truth" is the measurement)
 ggplot(gam_cv_results, aes(x=response, y=truth, group=iter, colour=iter)) + # inter reflects the folds of the cross validation procedure
   geom_point(alpha=0.05)+
   geom_smooth(method = "lm") +
   theme_classic()
-
-
 
 ```
 
@@ -603,20 +623,17 @@ summary(fit_gam_iter_1)
 
 So, in the GAM holdout set the R2 \~ 0.94 which is a slight improvement over the linear model.
 
-We can now train our GAM model using all of the data and look at the shape of associations between covariates and the outcome.
+We can now train our GAM model using all of the data and look at the shape of associations between important variables in the GAM-boost model and the outcome.
 
 ```{r Train the Model on all of the Data, echo=FALSE}
 
-#parallelStartSocket(cpus=detectCores()); this isn't needed in the cloud
-
 gam_model <- mlr::train(tune_wrapper_gam,gam_task)
 
-#parallelStop(); this isn't needed in the cloud
 
 #Extract model information
 gam_model_data <- getLearnerModel(gam_model,more.unwrap=TRUE)
-
-#This takes about 2 minutes
+saveRDS(gam_model_data, "models/gam_model.rds")
+#This takes about 5 minutes
 ```
 
 The code below plots the shape of the relationships between the most important variables in the gamboost model and our outcome.
@@ -628,7 +645,9 @@ plot(gam_model_data$fitted(),resid(gam_model_data))
 
 ```
 
-The plots above demonstrate the non-linear relationships captured for the most important variables in the GAM model. We can also map the residuals from the GAM model.
+The plots above demonstrate the non-linear relationships captured for the most important variables in the GAM model. Do they make sense?
+
+We can also map the residuals from the GAM model.
 
 ```{r Map GAM Model Errors}
 
@@ -646,10 +665,12 @@ resid_map_gam <- ggplot(data=mtl_temp_dat_clean, mapping=aes(x=lon, y=lat, color
 resid_map_gam
 ```
 
-So, in summary the GAM model offers some improvement over the already "pretty good" linear model. Next we will examine random forest and XGBoost models to see if we can improve on the GAM using more complex machine learning methods. But first, we will generate predictions from our gamboost model and add them to the database we will use for mapping later.
+In summary, the GAM model offers some improvement over the already "pretty good" linear model.
 
-```{r Add Gamboost predictions to database for mapping }
+Next we will examine random forest and XGBoost models to see if we can improve on the GAM using more complex machine learning methods. But first, we will generate predictions from our gamboost model and add them to the database we will use for mapping later.
 
+```{r Add GAM predictions to database for mapping }
+# You may see a warning about extrapolation; it is ok.
 mtl_map_data_std$gam_prediction <- predict(gam_model_data, mtl_map_data_std)
 
 #Check that the new variable "gam_prediction" is added
@@ -658,9 +679,9 @@ names(mtl_map_data_std)
 
 ## MODEL 3: Random Forest
 
-We will now turn to less transparent and interpretable machine learning models starting with a random forest model. As you will see, these methods have several "**hyperparameters**" that need to be "**tuned**" to identify the best predictive model.
+We will now turn to less transparent machine learning models starting with a random forest model. As you will see, these methods have several "**hyperparameters**" that need to be "**tuned**" to identify the best predictive model.
 
-You can think of the hyperparameters as dials that need to be set before starting the model training process. Selecting the optimal hyperparameters is an important part of using machine learning methods.
+You can think of the hyperparameters as "dials that need to be set" before starting the model training process. Selecting the optimal hyperparameters is an important part of using machine learning methods.
 
 Otherwise, we will follow a similar set of steps as above in training our random forest model.
 
@@ -685,18 +706,18 @@ Next we will setup the code to "tune" the hyperparameters for our random forest 
 The code below defines the search space we will use in selecting hyperparameters for our random forest model and creates a new object "**tuned_forest_pars**" that stores information for the best set of parameters.
 
 ```{r 2. Hyperparameter Tuning for Random Forest Model, echo = FALSE}
-set.seed(1980)
+set.seed(1980) # Change this number
 
 # You can try different numbers for each of these 
 forest_param_space <- makeParamSet(   
-  makeIntegerParam("ntree", lower = 45, upper = 60), 
-  makeIntegerParam("mtry", lower=5,upper=15),
-  makeIntegerParam("nodesize", lower=1, upper=10),
+  makeIntegerParam("ntree", lower = 10, upper = 60), 
+  makeIntegerParam("mtry", lower=1,upper=20),
+  makeIntegerParam("nodesize", lower=10, upper=100),
   makeIntegerParam("maxnodes", lower=5, upper = 30)
 )
 
 #Search Space (We use Random Search to Save Time)
-rand_search <- makeTuneControlRandom(maxit = 50) # We use 50 iterations here to save time, a larger random search will likely result in better performance but will take more time
+rand_search <- makeTuneControlRandom(maxit = 100) # We use 100 iterations here to save time, a larger random search will likely result in better performance but will take more time
 
 kfold10 <- makeResampleDesc("CV",iters=10)
 
@@ -718,7 +739,7 @@ tuned_forest_pars <- tuneParams(learner = forest,
 tuned_forest_pars
 ```
 
-From the output above we see that the following hyperparameters were selected: ntree=59, mtry=15, nodesize=10, maxnodes=29. ***Please feel free to modify the numbers specified in the hyperparameter search to see how this impacts model performance*****.**
+From the output above we see that the following hyperparameters were selected: ntree=54, mtry=20, nodesize=93, maxnodes=29. ***Please feel free to modify the numbers specified in the hyperparameter search to see how this impacts model performance*****.**
 
 Let's evaluate the performance of our random forest model (with tuned hyperparameters) using a 3-fold cross-validation procedure.
 
@@ -732,7 +753,7 @@ tuned_forest <- setHyperPars(forest, par.vals = tuned_forest_pars$x)
 # 3-fold CV
 kfold3 <- makeResampleDesc("CV",iters=3)
 
-#Definces the entire CV procedure
+#Defines the entire CV procedure
 forest_cv <- resample(tuned_forest,
                       forest_task,
                       resampling = kfold3)
@@ -741,7 +762,11 @@ forest_cv
 
 ```
 
-From the results above we see that the mse.test.mean is 0.0025735 which is only slightly better (\~2.5%) than for the GAM model above (mse.test.mean \~ 0.00264).
+From the results above we see that the mse.test.mean for the Random Forest model is slightly better than for the GAM model above.
+
+**Enter the mse.test.mean value in the Google Sheet for the Random Forest model:**
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
 
 ```{r Look at CV Results, echo=FALSE}
 # Create Dataframe Including Measured and Predicted Values from the Random Forest Model in the Holdout Set
@@ -778,7 +803,7 @@ tuned_forest <- setHyperPars(forest, par.vals = tuned_forest_pars$x) # defines a
 tuned_forest_model <- mlr::train(tuned_forest,forest_task)
 
 forest_model_data <- getLearnerModel(tuned_forest_model)
-
+saveRDS(forest_model_data, "models/rf_model.rds")
 ```
 
 We can now plot the "Out of Bag Error" for our Random Forest model to make sure we have included enough trees in our model.
@@ -871,7 +896,7 @@ XGBoost has several **hyperparameters** we need to specify before we start train
 2.  "**gamma**": This is the minimum amount of splitting by which a node must improve the loss function (in our case the mean square error, mse).
 3.  **"max_depth":** The maximum number of levels deep that each tree can grow.
 4.  "**min_child_weight**": The minimum amount of data required in single node
-5.  "**subsample**": The proportion of the data set to be randomly sampled (without replacement) for each tree. This is done to prevent overfitting (setting this to 1 uses all of the data in the training set)
+5.  "**subsample**": The proportion of the data set to be randomly sampled (without replacement) for each tree. This is done to prevent overfitting (setting this to 1 uses all of the data in the training set). Default = 1.
 6.  "**colsample_bytree**": The proportion of predictor variables sampled for each tree.
 7.  "**nrounds**": The number of sequentially built trees in the model.
 
@@ -880,14 +905,15 @@ set.seed(1980)
 #Define the Paramater Space to Search
 xgb_param_space <- makeParamSet(
   makeNumericParam("eta",lower=0,upper=1),
-  makeNumericParam("gamma", lower=0, upper=1),
+  makeNumericParam("gamma", lower=0, upper=5),
   makeIntegerParam("max_depth",lower=1,upper=10),
-  makeNumericParam("min_child_weight", lower=1, upper=10),
-  makeNumericParam("colsample_bytree", lower=0.5, upper=1),
+  makeNumericParam("min_child_weight", lower=10, upper=100),
+  makeNumericParam("subsample", lower=0.5, upper=1),
+  makeNumericParam("colsample_bytree", lower=0.2, upper=1),
   makeIntegerParam("nrounds", lower=30,upper=30) #Fix this to start, can adjust later if needed
 )
 #Perform a Random Search (50 interations)
-rand_search <- makeTuneControlRandom(maxit = 50) #Again we use 50 iterations to save time
+rand_search <- makeTuneControlRandom(maxit = 100) #Again we use 100 iterations to save time
 
 kfold10 <- makeResampleDesc("CV",iters=10)
 
@@ -922,7 +948,11 @@ xgb_cv
 
 ```
 
-From the results above, we see that the XGBoost model is performing the best of any of the models examined so far (mse.test.mean = 0.0008653).
+From the results above, we see that the XGBoost model is performing the best of any of the models examined so far.
+
+**Enter the mse.test.mean value in the Google Sheet for the XGBoost model:**
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
 
 ```{r Look at CV Results, echo=FALSE}
 # Create Dataframe Including Measured and Predicted Values from the XGBoost Model in the CV sets
@@ -960,6 +990,8 @@ tuned_xgb <- setHyperPars(xgb, par.vals=tuned_xgb_params$x)
 tuned_xgb_model <- mlr::train(tuned_xgb, xgb_task)
 
 xgb_model_data <- getLearnerModel(tuned_xgb_model)
+saveRDS(xgb_model_data, "models/xgb_model.rds")
+
 
 #Plot
 ggplot(xgb_model_data$evaluation_log, aes(iter, train_rmse)) +
@@ -1013,7 +1045,9 @@ ggarrange(resid_map_lm,
 
 ```
 
-Finally, we will generate predictions from our XGBoost model and add them to our database we will use for mapping. This requires a few more steps than above because XGBoost is a bit picky about how the predictions are generated.
+Finally, we will generate predictions from our XGBoost model and add them to our database we will use for mapping.
+
+This requires a few more steps than above because XGBoost is a bit picky about how the predictions are generated.
 
 ```{r Add XGBoost predictions to database for mapping }
 
@@ -1043,25 +1077,6 @@ names(mtl_map_data_std)
 ## MODEL 5: Dense Neural Networks
 
 As our final approach, we will examine dense neural networks using the *keras* package in R.
-
-```{r Install Keras, echo = FALSE}
-
-#install.packages("keras")
-#virtualenv_create("r-reticulate", python = install_python())
-
-#library(keras)
-#install_keras(envname = "r-reticulate")
-
-#library(keras)
-#tensorflow::tf_config()
-
-#For Cloud
-install.packages("keras")
-keras::install_keras(tensorflow = "cpu")
-library(keras)
-library(tensorflow)
-#this will take a couple minutes
-```
 
 First we will create our training, validation, and test sets.
 
@@ -1198,11 +1213,19 @@ ggplot(combined, aes(x=prediction, y=target))+
 
 fit <- lm(target ~ prediction, data=combined)
 summary(fit)
+
+#Get the MSE Value for the Neural Network on the Test Set
+mse_nn <- mean(fit$residuals^2)
+mse_nn
 ```
 
 Try adjusting the hyperparameters and see how this impacts model performance. Does the dense neural network seem to perform as well as the methods above?
 
-```{r Generate Predictions in dataset used for mapping}
+**Enter the mse value in the Google Sheet for the Neural Network model:**
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
+
+```{r Generate predictions in dataset used for mapping}
 
 #Load the Saved Model 
 nn_model <- load_model_tf("nn.models/model_1")
@@ -1231,9 +1254,9 @@ names(mtl_map_data_std)
 
 ```
 
-```{r Clean up the Dataframe we will use for mapping }
+```{r Clean up the dataframe we will use for mapping }
 
-# Make sure Prediction Variables are in correct format
+# Make sure prediction variables are in correct format
 mtl_map_data_std$lm_prediction <- as.vector(mtl_map_data_std$lm_prediction)
 
 mtl_map_data_std$forest_prediction <- as.vector(mtl_map_data_std$forest_prediction)
@@ -1245,7 +1268,7 @@ mtl_map_data_std$nn_predictions <- as.vector(mtl_map_data_std$nn_predictions)
 
 ## Mapping Predicted Temperature Variations
 
-Finally, we will map our predictions of spatial variations in daily temperature across Montreal if July 1 had a daily mean airport temperature of 30oC.
+Finally, we will map our predictions of spatial variations in daily temperature across Montreal if July 1 had a daily mean airport temperature of 30°C.
 
 ```{r Map the Predictions}
 
@@ -1278,7 +1301,7 @@ mtl_map_data_std$xgb_prediction_degC <-exp(mtl_map_data_std$xgb_prediction)
 
 mtl_map_data_std$nn_prediction_degC <-exp(mtl_map_data_std$nn_predictions) 
 
-#Look at Descriptive stats for Predictions
+#Look at Descriptive stats for Predictions (look at these individually, do they make sense?)
 summary(mtl_map_data_std$lm_prediction_degC)
 
 summary(mtl_map_data_std$gam_prediction_degC)
@@ -1355,14 +1378,11 @@ nn_map
 
 ```
 
-Oops! Looks like the neural net model generated some weird values! We can subset the dataframe to map only the predictions less than 40oC so we can see where on the map the weird predictions were occurring. These areas will show up in white in the map generated by the code below.
-
-**Note**: You may not get weird predictions, it all depends on the final model you train!
+**Note**: If you get weird predictions (e.g, very high or very low values you can try mapping a subset of the data to see where the poor predictions are occurring. The code below shows you how to subset and map the data if needed.
 
 ```{r Neural Net Model Predictions, below 40 }
-  nn_map_below_40 <- ggplot(data=subset(mtl_map_data_std,nn_prediction_degC<40),
+ nn_map_below_40 <- ggplot(data=subset(mtl_map_data_std,nn_prediction_degC<40),
        mapping=aes(x=Lon, y=Lat,color=nn_prediction_degC))+
-  #gg(mtl_boroughs)+
   geom_point(size=.1) +
   theme_void() +
   scale_color_viridis_c()+
@@ -1372,7 +1392,43 @@ nn_map_below_40
 
 ```
 
-#IGNORE CODE BELOW, THE DATASET HAS ALREADY BEEN CREATED FOR YOUR#
+Which model looks most reasonable? Which would you be comfortable using in an epidemiological study?
+
+```{r Show all the maps}
+
+ggarrange(xgb_map,
+          gam_map,
+          forest_map,
+          nn_map,
+          lm_map,
+          labels = c("XGB",
+                     "GAM",
+                     "RF",
+                     "NN",
+                     "LM"),
+          nrow=3,
+          ncol=2,
+          common.legend = FALSE,
+          legend = "right") 
+
+
+```
+
+## Summary
+
+-   We hope this exercise has been useful for you in learning about different ways of modelling temperature variations across a city. As you can see, not all of the models will necessarily provide the same answers and not all will be equally suitable for use in epidemiological analyses. We need to use our subject matter expertise to select a models that make the most sense and perhaps try several different models to evaluate the sensitivity of our results to the method of exposure assessment.
+
+-   If you have time, you can try developing models for a different outcome (like night-time temperature).
+
+-   Please make sure you have entered your model performance in the Google Sheet (link below) so we can compare across all participants at the end of the workshop.
+
+<https://docs.google.com/spreadsheets/d/1KnRSuS7kqPpEPzNUSF5dr_eLBjDwYvqwznUSQa5ZtjA/edit#gid=0>
+
+\- END -
+
+\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\-\--
+
+#IGNORE CODE BELOW, THE DATASET HAS ALREADY BEEN CREATED FOR YOU#
 
 ```{r Standardize variables in dataset used for mapping}
 
