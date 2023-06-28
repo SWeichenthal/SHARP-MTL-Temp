@@ -52,6 +52,7 @@ pacman::p_load(tidyverse,
                corrplot,
                ggpolypath,
                ggspatial,
+               ggsn,
                randomForest,
                xgboost,
                caTools,
@@ -75,6 +76,8 @@ The code below will load the data we will need for this exercise. The last line 
 
 We will model **daily_avg_site** (i.e., the daily mean temperature), but other variables could also be of interest as outcomes. For example, if you have time you can also try modelling **night_ave_site**, which is the night-time average temperature.
 
+Take a second to look at the dataframe to get a sense of the data structure. You can type 'View(mtl_temp_dat) in the console to do this.
+
 ```{r Load Data Used for Modelling, echo=FALSE}
 #Load Temperature Database
 mtl_temp_dat <-read_csv("data/compiled_data_daily.csv")
@@ -97,7 +100,7 @@ As you will see, this was a dense monitoring campaign with excellent coverage ac
 ggplot(data=mtl_temp_dat, mapping=aes(x=lon, y=lat))+
   gg(mtl_boroughs)+
   geom_point() +
-  theme_void()
+  theme_void() 
 
 ```
 
@@ -252,7 +255,7 @@ mtl_temp_dat_clean_std <- mtl_temp_dat_clean_std %>%
 
 names(mtl_temp_dat_clean_std)
 
-#We maintain the database withouth standardized variables for mapping later
+#We maintain the database without standardized variables for mapping later
 mtl_temp_dat_clean <- mtl_temp_dat_clean %>%
   #Remove Correlated Variables
   dplyr::select(-tot_nox_300m,
@@ -342,7 +345,7 @@ In some cases you may know the specific list of variables you want to include in
 
 In this example, we will use what *mlr* calls the "filter" method to select predictors. To do this, we first create a ranked list of correlations between our predictor variables and our outcome. Let's look at these correlations.
 
-**Note**: *mlr* offers other methods of variable selection that are more exhaustive but take much longer to run. You can try these on your own when you have more time.
+**Note**: *mlr* offers other methods of variable selection that are more exhaustive but take longer to run. You can try these on your own when you have more time.
 
 ```{r 3. Automate Feature Selection, echo = FALSE}
   
@@ -359,10 +362,12 @@ plotFilterValues(fvalues = filter_values) + theme_bw() +  coord_flip()
 
 We see above that airport temperature is the most important predictor (not surprising) followed by time, and the area of buildings within 300m (a measure of the built environment). Correlations are weaker for other variables
 
-We would like to consider all 25 of these variables in our model. To do this, we will create what *mlr* calls a "**filter wrapper**" that will determine the best set of predictors of the set of 25 we have identified. This is implemented in the following steps:
+Think about how many variables you would like to consider in your model (the example below considers all 25 but you can change this).
+
+We will now create what *mlr* calls a "**filter wrapper**" that will determine the best set of predictors of the set of 25 we have identified. This is implemented in the following steps:
 
 1.  We use the "**makeFilterWrapper**" function to create a new learner object (called filter_wrapper) that combines our learner (i.e., a linear regression model) with the method we want to use for variable selection. We specify that we would like to select up to the best 25 variables (fw.abs = 25) based on the linear correlation with the outcome (fw.method = "linear.correlation"). We also specify that we want to force 4 specific variables into the model based on our previous knowledge (latitude, longitude, time, and daily average airport temperature) using the "fw.mandatory.feat" option.
-2.  Create the parameter space that will be searched to select variables. Here we specify we are going to search for between 4 and 25 variables. We also define a grid search algorithm which will try every value of our search space (i.e., between 4 and 25 variables).
+2.  Create the parameter space that will be searched to select variables. Here we specify we are going to search for between 4 and 25 variables. We also define a grid search algorithm which will try every value of our search space (i.e., between 4 and 25 variables). You can change these values to examine what happens to model performance if you have time (e.g., only include 5, 10, or 15 variables).
 3.  Use a cross-validation (CV) procedure to select the best set of variables.
 
 ```{r Creating the Filter Wrapper, echo=FALSE}
@@ -403,24 +408,21 @@ tuned_features <- tuneParams(
 tuned_features
 ```
 
-From the output above you can see that the filter wrapper procedure selected a model including all 25 predictors.
+From the output above you can see that the filter wrapper procedure selected a model including all 25 predictors (you will see a different number if you decided to included a smaller number of variables).
 
 We will now evaluate our linear model in a cross-validation (3-fold CV) procedure to estimate how our model will perform in predicting values in external data sets.
 
-```{r Evaluate Model using Cross-Validation Procedure, echo = FALSE}
+```{r Evaluate using Cross-Validation Procedure, echo = FALSE}
  
 #Train Model Using CV ----------------------------------------------------
 set.seed(1980) #set seed for reproducibility. Pick any number.
 
 kfold3 <- makeResampleDesc("CV",iters=3)
 
-#parallelStartSocket(cpus=detectCores())
 
 lm_CV <- resample(filter_wrapper,
                   mtl_temp_lm_task,
                   resampling = kfold3)
-
-#parallelStop()
 
 #Look at Cross Validation Results (mean MSE across Test sets: mse.test.mean)
 lm_CV
@@ -555,14 +557,14 @@ gam <- makeLearner("regr.gamboost") #mlr uses the gamboost algorithm
 
 ```
 
-As we did for the linear model, we will define our filter wrapper for selecting variables to include in our GAM model.
+As we did for the linear model, we will define our filter wrapper for selecting variables to include in our GAM model. Please feel free to change the number of variables you want to consider (maybe examining fewer than 25 is just fine?).
 
 ```{r Create Filter Wrapper for GAM Variable Selection, echo = FALSE}
 
 # Define Filter Wrapper to Select Predictor Variables
 filter_wrapper_gam <- makeFilterWrapper(learner = gam, #defined above
                                    fw.method = "linear.correlation",
-                                   fw.abs = 25)
+                                   fw.abs = 25) 
 # Define Search Space
 gam_param_space <- makeParamSet(
   makeIntegerParam("fw.abs",
@@ -574,6 +576,7 @@ grid_search <- makeTuneControlGrid()
 # Create the Filter Wrapper Object that will use a 10-fold CV to select best set of predictors
 
 kfold10 <- makeResampleDesc("CV",iters=10)
+
 tune_wrapper_gam <- makeTuneWrapper(learner = filter_wrapper_gam,
                          resampling = kfold10,
                          par.set = gam_param_space,
